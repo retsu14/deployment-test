@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and (re)start the whole stack. Safe to run again and again.
+# Build and (re)start the backend stack. Safe to run again and again.
 set -euo pipefail
 
 cd "$(dirname "$0")"

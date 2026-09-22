@@ -1,13 +1,7 @@
-# Caddy gets and renews HTTPS certificates by itself. No certbot, no cron.
+# Caddy gets and renews the HTTPS certificate by itself. No certbot, no cron.
 # The {$VAR} values come from .env.production.
 {
 	email {$ACME_EMAIL}
-}
-
-# yoursite.com  ->  Next.js
-{$APP_DOMAIN} {
-	encode zstd gzip
-	reverse_proxy frontend:3000
 }
 
 # api.yoursite.com  ->  Laravel (through nginx)

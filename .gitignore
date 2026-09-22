@@ -1,2 +1,0 @@
-# Real secrets for the server -- never commit this.
-.env.production
