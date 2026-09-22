@@ -1,0 +1,131 @@
+# Production stack for the VPS. ONE file, ONE command:
+#
+#   ./deploy.sh
+#
+# Everything talks over the private "app-network". Only Caddy publishes ports
+# (80/443) to the internet -- the database and PHP are unreachable from outside.
+name: fullstack
+
+services:
+  # --- Public entrypoint. Gets free HTTPS certificates automatically. --------
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+      - web
+    networks:
+      - app-network
+
+  # --- Next.js (standalone build, no node_modules at runtime) ---------------
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+      args:
+        # NEXT_PUBLIC_* is baked in at BUILD time, so it must be set here --
+        # changing it later requires a rebuild, not just a restart.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    image: fullstack-frontend:prod
+    init: true
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # --- Nginx: serves Laravel's public/ and hands .php to the app container --
+  web:
+    build:
+      context: ./backend
+      target: nginx
+    image: fullstack-web:prod
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes:
+      # Read-only so uploaded files under storage/app/public can be served.
+      - laravel-storage:/var/www/html/storage:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/up >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - app-network
+
+  # --- Laravel (PHP-FPM). Code + vendor are baked into the image. -----------
+  app:
+    build:
+      context: ./backend
+      target: production
+    image: fullstack-app:prod
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      # The database is a container named "db", not localhost.
+      DB_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Keeps logs and uploaded files alive across deploys.
+      - laravel-storage:/var/www/html/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "php -r '$$socket = @fsockopen(\"127.0.0.1\", 9000); exit($$socket ? 0 : 1);'",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 120s
+    networks:
+      - app-network
+
+  # --- MySQL. No "ports:" on purpose -- nothing outside can reach it. -------
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  laravel-storage:
+  caddy-data:
+  caddy-config:
