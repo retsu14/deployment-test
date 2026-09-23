@@ -179,19 +179,19 @@ at the end -- the safest option needs no `db` DNS record.
 
 ---
 
-Now generate the app key (Laravel needs it to encrypt sessions and cookies):
+### About `APP_KEY` -- leave it empty
 
-```bash
-docker compose -f docker-compose.prod.yml run --rm app php artisan key:generate --show
+Laravel needs a key to encrypt sessions and cookies, but you do not have to
+make one. Leave `APP_KEY=` blank. The first time the app starts it generates a
+key, saves it in its storage volume, and reuses that same key on every later
+deploy. You will see this in the logs once:
+
+```
+[entrypoint] No APP_KEY was set, so one was generated and saved.
 ```
 
-Copy the whole `base64:....` line it prints, then put it in the file:
-
-```bash
-nano .env.production
-```
-
-Paste it after `APP_KEY=`.
+Nothing to do here. If you ever want to set the key yourself, there is a
+section for it *after* the first deploy -- it needs the image to exist first.
 
 ---
 
@@ -221,6 +221,31 @@ browser password box first (that is Caddy, using `DB_AUTH_USER` /
 `DB_AUTH_HASH`), and only after that the phpMyAdmin login. Log in there with
 your `DB_USERNAME` and `DB_PASSWORD` -- the two logins are separate on
 purpose.
+
+---
+
+### Setting the app key yourself (optional)
+
+Skip this unless you want control of the key -- for example when two servers
+must share one so they can read each other's sessions.
+
+Your app already made a key on first boot. To see it:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml exec app cat storage/app_key
+```
+
+To use your own instead, generate one:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml run --rm app php artisan key:generate --show
+```
+
+Paste that `base64:...` line after `APP_KEY=` in `.env.production`, then
+`./deploy.sh`. A key in `.env.production` always wins over the saved one.
+
+> Never change this on a live app. Everything encrypted with the old key --
+> sessions, and any encrypted columns -- becomes unreadable.
 
 ---
 
@@ -353,9 +378,9 @@ Check the database is healthy (`dc ps`). The `PMA_HOST` is the container name
 itself.
 
 **`app` container keeps restarting**
-Read `dc logs app`. The two usual messages are `APP_KEY is not set` (redo the
-key step) and `migrations failed` (check the `DB_` values in
-`.env.production`).
+Read `dc logs app`. The usual message is `migrations failed` -- check the `DB_`
+values in `.env.production`, then deploy again. If it says the database never
+became reachable, look at `dc logs db` too.
 
 **Port 80 is already in use**
 Something else (often Apache) is on it: `systemctl disable --now apache2`.

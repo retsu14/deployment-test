@@ -6,6 +6,13 @@ cd /var/www/html
 export HOME=/var/www/html
 git config --global --add safe.directory /var/www/html
 
+# Only the web server needs migrations and cache warming. One-off commands
+# (php artisan ..., sh, composer ...) skip straight to running the command.
+case "$1" in
+    php-fpm) BOOTING_SERVER=1 ;;
+    *)       BOOTING_SERVER=0 ;;
+esac
+
 # --- Development only: bind-mounted volume may be missing dependencies -------
 if [ "$APP_ENV" != "production" ]; then
     if [ ! -f vendor/autoload.php ]; then
@@ -34,53 +41,67 @@ mkdir -p storage/app/public \
          storage/framework/views \
          storage/logs
 
-# --- Production sanity check ------------------------------------------------
+# --- Application key --------------------------------------------------------
+# Laravel needs a key to encrypt sessions and cookies. If .env.production has
+# none, make one and keep it in the storage volume so it stays the same on
+# every later deploy -- a key that changes would log everybody out and make
+# already-encrypted data unreadable.
 if [ "$APP_ENV" = "production" ] && [ -z "$APP_KEY" ]; then
-    echo "[entrypoint] ERROR: APP_KEY is not set."
-    echo "[entrypoint] Generate one with: php artisan key:generate --show"
-    echo "[entrypoint] then put it in .env.production and deploy again."
-    exit 1
-fi
+    KEY_FILE=storage/app_key
 
-# --- Wait for the database --------------------------------------------------
-# On the very first boot MySQL reports "healthy" a moment before it really
-# accepts connections on port 3306, so retry for up to two minutes.
-echo "[entrypoint] Waiting for the database..."
-attempt=0
-until php -r 'exit(@fsockopen(getenv("DB_HOST") ?: "db", (int) (getenv("DB_PORT") ?: 3306), $e, $s, 2) ? 0 : 1);' 2>/dev/null; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 60 ]; then
-        echo "[entrypoint] ERROR: the database never became reachable."
-        exit 1
+    if [ ! -s "$KEY_FILE" ]; then
+        php artisan key:generate --show > "$KEY_FILE"
+        chmod 600 "$KEY_FILE"
+        echo "[entrypoint] No APP_KEY was set, so one was generated and saved."
+        echo "[entrypoint] It is kept in the storage volume and reused from now on."
     fi
-    sleep 2
-done
 
-# --- Database migrations ----------------------------------------------------
-echo "[entrypoint] Running migrations..."
-if [ "$APP_ENV" = "production" ]; then
-    # Fail loudly: a silently broken app is harder to debug than a stopped one.
-    php artisan migrate --force || {
-        echo "[entrypoint] ERROR: migrations failed. Check the database settings"
-        echo "[entrypoint] in .env.production, then deploy again."
-        exit 1
-    }
-else
-    php artisan migrate --force || true
+    APP_KEY="$(cat "$KEY_FILE")"
+    export APP_KEY
 fi
 
-# --- Optimize for production / keep fresh for dev ---------------------------
-if [ "$APP_ENV" = "production" ]; then
-    echo "[entrypoint] Caching config, routes and views..."
-    php artisan config:cache
-    php artisan route:cache
-    php artisan view:cache
-else
-    php artisan optimize:clear || true
-fi
+if [ "$BOOTING_SERVER" = "1" ]; then
+    # --- Wait for the database ----------------------------------------------
+    # On the very first boot MySQL reports "healthy" a moment before it really
+    # accepts connections on port 3306, so retry for up to two minutes.
+    echo "[entrypoint] Waiting for the database..."
+    attempt=0
+    until php -r 'exit(@fsockopen(getenv("DB_HOST") ?: "db", (int) (getenv("DB_PORT") ?: 3306), $e, $s, 2) ? 0 : 1);' 2>/dev/null; do
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 60 ]; then
+            echo "[entrypoint] ERROR: the database never became reachable."
+            echo "[entrypoint] Check the DB_ settings in .env.production."
+            exit 1
+        fi
+        sleep 2
+    done
 
-if [ ! -e public/storage ]; then
-    php artisan storage:link || true
+    # --- Database migrations ------------------------------------------------
+    echo "[entrypoint] Running migrations..."
+    if [ "$APP_ENV" = "production" ]; then
+        # Fail loudly: a silently broken app is harder to debug than a stopped one.
+        php artisan migrate --force || {
+            echo "[entrypoint] ERROR: migrations failed. Check the database settings"
+            echo "[entrypoint] in .env.production, then deploy again."
+            exit 1
+        }
+    else
+        php artisan migrate --force || true
+    fi
+
+    # --- Optimize for production / keep fresh for dev -----------------------
+    if [ "$APP_ENV" = "production" ]; then
+        echo "[entrypoint] Caching config, routes and views..."
+        php artisan config:cache
+        php artisan route:cache
+        php artisan view:cache
+    else
+        php artisan optimize:clear || true
+    fi
+
+    if [ ! -e public/storage ]; then
+        php artisan storage:link || true
+    fi
 fi
 
 echo "[entrypoint] Starting: $*"

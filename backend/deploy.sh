@@ -12,13 +12,6 @@ if [ ! -f .env.production ]; then
 	exit 1
 fi
 
-if grep -q '^APP_KEY=$' .env.production; then
-	echo "ERROR: APP_KEY is empty in .env.production."
-	echo "Run:  $COMPOSE run --rm app php artisan key:generate --show"
-	echo "...then paste the base64:... value into APP_KEY."
-	exit 1
-fi
-
 echo "==> Building images (first run takes a few minutes)"
 $COMPOSE build
 
