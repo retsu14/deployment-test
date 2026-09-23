@@ -35,15 +35,33 @@ all -- the only way in is through the app.
 
 ---
 
-## Step 1 -- Point a subdomain at the server
+## Step 1 -- Point your subdomains at the server
 
-In your DNS settings, add one **A record** for the API:
+Every address you want to open in a browser needs its own **A record**. Add
+two, both pointing at the same server:
 
-| Type | Name  | Value (your server IP) |
-| ---- | ----- | ---------------------- |
-| A    | `api` | `203.0.113.10`         |
+| Type | Name  | Value (your server IP) | Gives you            |
+| ---- | ----- | ---------------------- | -------------------- |
+| A    | `api` | `203.0.113.10`         | `api.yoursite.com`   |
+| A    | `db`  | `203.0.113.10`         | `db.yoursite.com`    |
 
-That gives you `api.yoursite.com`. Check it worked:
+The first is the Laravel API. The second is phpMyAdmin, so you can look at the
+database from a browser.
+
+**The database itself never gets a DNS record.** MySQL is not a website -- it
+has no port open to the internet at all. Nothing outside the server can dial
+it directly. The only ways to the data are through the API, or through
+phpMyAdmin, and both live inside the same private Docker network:
+
+```
+      api.yoursite.com ---> [ Caddy ] ---> nginx -> Laravel --+
+                                |                             |
+      db.yoursite.com  ---> [ Caddy ] ---> phpMyAdmin --------+--> [ db ]
+                          (asks for a                              no open
+                           password first)                          port
+```
+
+Check the records work:
 
 ```bash
 ping api.yoursite.com
@@ -52,10 +70,10 @@ ping api.yoursite.com
 If it replies with your server's IP, you are good. **Do this before Step 6** --
 HTTPS certificates only work once DNS points at the server.
 
-> **Using Cloudflare for your DNS?** Set this record to **DNS only** (click the
-> orange cloud so it turns grey). If it stays orange, Cloudflare hides your
-> server and Caddy cannot prove it owns the domain. You can switch it back on
-> later, but only after setting SSL mode to **Full (strict)**.
+> **Using Cloudflare for your DNS?** Set both records to **DNS only** (click
+> the orange cloud so it turns grey). If they stay orange, Cloudflare hides
+> your server and Caddy cannot prove it owns the domain. You can switch them
+> back on later, but only after setting SSL mode to **Full (strict)**.
 
 ---
 
@@ -113,16 +131,53 @@ Change these:
 | Setting                            | Set it to                                                  |
 | ---------------------------------- | ---------------------------------------------------------- |
 | `API_DOMAIN`                       | `api.yoursite.com`                                         |
+| `DB_DOMAIN`                        | `db.yoursite.com`                                          |
 | `ACME_EMAIL`                       | your real email (Let's Encrypt expiry notices)             |
 | `FRONTEND_URL`                     | your Cloudflare address, e.g. `https://yoursite.pages.dev` |
 | `APP_URL`                          | `https://api.yoursite.com`                                 |
 | `DB_PASSWORD` / `DB_ROOT_PASSWORD` | long random passwords                                      |
+| `DB_AUTH_USER` / `DB_AUTH_HASH`    | the phpMyAdmin door lock -- see Step 5b                    |
 
 Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`.
 
 `FRONTEND_URL` matters more than it looks: browsers refuse to let your
 frontend read answers from a different address unless the API names that
 address. Get it wrong and every request fails with a CORS error.
+
+---
+
+## Step 5b -- Put a lock on phpMyAdmin
+
+`db.yoursite.com` is open to the whole internet, and bots scan for phpMyAdmin
+around the clock. So Caddy asks for a username and password *before* anything
+reaches phpMyAdmin -- two locks instead of one.
+
+Pick a password, then turn it into a hash:
+
+```bash
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password-here'
+```
+
+It prints something like `$2a$14$jUXW2krGwHA...`. Put it in `.env.production`:
+
+```
+DB_AUTH_USER=admin
+DB_AUTH_HASH='$2a$14$jUXW2krGwHA...'
+```
+
+> **Keep the single quotes.** The hash is full of `$` signs, and Docker reads
+> `$` as the start of a variable name. Without quotes it silently chops the
+> hash down to `$2a$14`, and then the password never works no matter what you
+> type. This one catches everybody.
+
+The password is stored only as a hash, so even someone reading this file
+cannot see the original.
+
+**Prefer not to expose it at all?** See
+[Reaching phpMyAdmin without opening it to the internet](#reaching-phpmyadmin-without-opening-it-to-the-internet)
+at the end -- the safest option needs no `db` DNS record.
+
+---
 
 Now generate the app key (Laravel needs it to encrypt sessions and cookies):
 
@@ -150,9 +205,9 @@ Paste it after `APP_KEY=`.
 > Windows. Fix it once: `chmod +x deploy.sh`
 
 The first run builds everything and takes 3-10 minutes. When it finishes you
-should see four containers `Up`, with `app`, `db` and `web` marked `healthy`.
+should see five containers `Up`, with `app`, `db` and `web` marked `healthy`.
 
-Test it from your own computer:
+Test the API from your own computer:
 
 ```bash
 curl https://api.yoursite.com/up
@@ -160,6 +215,12 @@ curl https://api.yoursite.com/up
 
 You should get a page saying **Application up**, over HTTPS, with a valid
 certificate that Caddy fetched on its own.
+
+Then open **https://db.yoursite.com** in a browser. You should get a small
+browser password box first (that is Caddy, using `DB_AUTH_USER` /
+`DB_AUTH_HASH`), and only after that the phpMyAdmin login. Log in there with
+your `DB_USERNAME` and `DB_PASSWORD` -- the two logins are separate on
+purpose.
 
 ---
 
@@ -281,6 +342,16 @@ on. It must include `https://` and have no trailing slash. Fix it and run
 `NEXT_PUBLIC_API_URL` was missing when Cloudflare built the site. Set it and
 redeploy the frontend.
 
+**phpMyAdmin keeps asking for the password, even when it's right**
+The hash got cut short. Check `.env.production` -- `DB_AUTH_HASH` must be
+wrapped in single quotes and end with a long string of letters, not with
+`$2a$14`. Redo Step 5b, then `./deploy.sh`.
+
+**phpMyAdmin loads but says it can't connect to the server**
+Check the database is healthy (`dc ps`). The `PMA_HOST` is the container name
+`db`, not `localhost` -- localhost inside a container means the container
+itself.
+
 **`app` container keeps restarting**
 Read `dc logs app`. The two usual messages are `APP_KEY is not set` (redo the
 key step) and `migrations failed` (check the `DB_` values in
@@ -291,6 +362,44 @@ Something else (often Apache) is on it: `systemctl disable --now apache2`.
 
 **Out of disk space**
 Old images pile up: `docker system prune -a`.
+
+---
+
+## Reaching phpMyAdmin without opening it to the internet
+
+Publishing phpMyAdmin at `db.yoursite.com` is convenient -- and convenient for
+attackers too. The Caddy password stops the casual scanning, but a database
+admin panel on the public internet is still the riskiest thing in this setup.
+
+The safer option is an **SSH tunnel**: phpMyAdmin stays completely unreachable
+from outside, and you borrow the server's own private network for as long as
+you need it.
+
+To do that, give the `phpmyadmin` service a localhost-only port in
+`docker-compose.prod.yml`:
+
+```yaml
+    ports:
+      - "127.0.0.1:8080:80"
+```
+
+`127.0.0.1:` is the important part -- it means "this server only", not the
+internet. Then delete the `{$DB_DOMAIN}` block from the `Caddyfile`, and drop
+the `db` DNS record.
+
+Now, from your own computer:
+
+```bash
+ssh -L 8080:localhost:8080 root@203.0.113.10
+```
+
+Leave that terminal open and go to **http://localhost:8080** in your browser.
+You are looking at phpMyAdmin on the server, through the SSH connection you
+already trust. Close the terminal and the door closes with it.
+
+Which to teach? Start with the Caddy version because students can see it work
+in a browser immediately. Show the tunnel once they are comfortable -- it is
+how this is usually done on a real production server.
 
 ---
 

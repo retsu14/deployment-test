@@ -17,6 +17,9 @@ services:
       - "443:443"
     environment:
       API_DOMAIN: ${API_DOMAIN}
+      DB_DOMAIN: ${DB_DOMAIN}
+      DB_AUTH_USER: ${DB_AUTH_USER}
+      DB_AUTH_HASH: ${DB_AUTH_HASH}
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -24,6 +27,7 @@ services:
       - caddy-config:/config
     depends_on:
       - web
+      - phpmyadmin
     networks:
       - app-network
 
@@ -101,6 +105,24 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks:
+      - app-network
+
+  # --- phpMyAdmin. Also has no "ports:" -- the only way in is through Caddy,
+  # --- which asks for a password first.
+  phpmyadmin:
+    image: phpmyadmin:5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      # Tells phpMyAdmin it is being reached over https, so it stops
+      # redirecting the browser back to http.
+      PMA_ABSOLUTE_URI: https://${DB_DOMAIN}/
+      UPLOAD_LIMIT: 64M
     networks:
       - app-network
 
