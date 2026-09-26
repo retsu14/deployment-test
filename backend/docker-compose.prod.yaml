@@ -1,14 +1,6 @@
-# Production stack for the VPS -- BACKEND ONLY.
-# The frontend is deployed separately on Cloudflare Pages.
-#
-#   ./deploy.sh
-#
-# Everything talks over the private "app-network". Only Caddy publishes ports
-# (80/443) to the internet -- the database and PHP are unreachable from outside.
 name: api
 
 services:
-  # --- Public entrypoint. Gets free HTTPS certificates automatically. --------
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -45,7 +37,8 @@ services:
       # Read-only so uploaded files under storage/app/public can be served.
       - laravel-storage:/var/www/html/storage:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/up >/dev/null 2>&1 || exit 1"]
+      test:
+        ["CMD-SHELL", "wget -qO- http://localhost/up >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -63,19 +56,17 @@ services:
     env_file:
       - .env.production
     environment:
-      # The database is a container named "db", not localhost.
       DB_HOST: db
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      # Keeps logs and uploaded files alive across deploys.
       - laravel-storage:/var/www/html/storage
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "php -r '$$socket = @fsockopen(\"127.0.0.1\", 9000); exit($$socket ? 0 : 1);'",
+          'php -r ''$$socket = @fsockopen("127.0.0.1", 9000); exit($$socket ? 0 : 1);''',
         ]
       interval: 10s
       timeout: 3s

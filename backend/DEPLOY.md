@@ -182,12 +182,12 @@ at the end -- the safest option needs no `db` DNS record.
 ### About `APP_KEY` -- leave it empty
 
 Laravel needs a key to encrypt sessions and cookies, but you do not have to
-make one. Leave `APP_KEY=` blank. The first time the app starts it generates a
-key, saves it in its storage volume, and reuses that same key on every later
-deploy. You will see this in the logs once:
+make one. Leave `APP_KEY=` blank. `./deploy.sh` generates a key the first time
+it runs, writes it into `.env.production`, and reuses that same key on every
+later deploy. You will see this once:
 
 ```
-[entrypoint] No APP_KEY was set, so one was generated and saved.
+==> No APP_KEY in .env.production -- generating one
 ```
 
 Nothing to do here. If you ever want to set the key yourself, there is a
@@ -205,7 +205,9 @@ section for it *after* the first deploy -- it needs the image to exist first.
 > Windows. Fix it once: `chmod +x deploy.sh`
 
 The first run builds everything and takes 3-10 minutes. When it finishes you
-should see five containers `Up`, with `app`, `db` and `web` marked `healthy`.
+should see the stack `Up` -- plus `migrate` marked `Exited (0)`, which is
+normal: it applies the migrations and then stops -- with `app`, `db` and `web`
+marked `healthy`.
 
 Test the API from your own computer:
 
@@ -229,20 +231,20 @@ purpose.
 Skip this unless you want control of the key -- for example when two servers
 must share one so they can read each other's sessions.
 
-Your app already made a key on first boot. To see it:
+Your app already made a key on first deploy. To see it:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml exec app cat storage/app_key
+grep '^APP_KEY=' .env.production
 ```
 
 To use your own instead, generate one:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml run --rm app php artisan key:generate --show
+docker compose --env-file .env.production -f docker-compose.prod.yaml run --rm app php artisan key:generate --show
 ```
 
-Paste that `base64:...` line after `APP_KEY=` in `.env.production`, then
-`./deploy.sh`. A key in `.env.production` always wins over the saved one.
+Replace the `APP_KEY=` line in `.env.production` with that `base64:...` value,
+then `./deploy.sh`.
 
 > Never change this on a live app. Everything encrypted with the old key --
 > sessions, and any encrypted columns -- becomes unreadable.
@@ -301,27 +303,27 @@ The frontend deploys on its own whenever you push -- Cloudflare handles that.
 Run these from the `backend` folder on the server.
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml ps
+docker compose --env-file .env.production -f docker-compose.prod.yaml ps
 ```
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml logs -f
+docker compose --env-file .env.production -f docker-compose.prod.yaml logs -f
 ```
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml logs -f app
+docker compose --env-file .env.production -f docker-compose.prod.yaml logs -f app
 ```
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml exec app php artisan about
+docker compose --env-file .env.production -f docker-compose.prod.yaml exec app php artisan about
 ```
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml exec app sh
+docker compose --env-file .env.production -f docker-compose.prod.yaml exec app sh
 ```
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml down
+docker compose --env-file .env.production -f docker-compose.prod.yaml down
 ```
 
 In order: see what is running, watch all logs live (`Ctrl+C` to stop), watch
@@ -331,7 +333,7 @@ container, and stop everything (your data is kept).
 That prefix is long, so make a shortcut once:
 
 ```bash
-echo "alias dc='docker compose --env-file .env.production -f docker-compose.prod.yml'" >> ~/.bashrc
+echo "alias dc='docker compose --env-file .env.production -f docker-compose.prod.yaml'" >> ~/.bashrc
 ```
 
 Reload it with `source ~/.bashrc`, and then it is just `dc ps`, `dc logs -f`,
@@ -378,9 +380,10 @@ Check the database is healthy (`dc ps`). The `PMA_HOST` is the container name
 itself.
 
 **`app` container keeps restarting**
-Read `dc logs app`. The usual message is `migrations failed` -- check the `DB_`
-values in `.env.production`, then deploy again. If it says the database never
-became reachable, look at `dc logs db` too.
+Read `dc logs app`. If it never starts, check the migration job first:
+`dc logs migrate` -- a connection error there means the `DB_` values in
+`.env.production` are wrong, so fix them and run `./deploy.sh` again. If the
+database itself looks wrong, `dc logs db` too.
 
 **Port 80 is already in use**
 Something else (often Apache) is on it: `systemctl disable --now apache2`.
@@ -401,7 +404,7 @@ from outside, and you borrow the server's own private network for as long as
 you need it.
 
 To do that, give the `phpmyadmin` service a localhost-only port in
-`docker-compose.prod.yml`:
+`docker-compose.prod.yaml`:
 
 ```yaml
     ports:

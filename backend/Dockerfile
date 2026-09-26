@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# base — shared PHP-FPM runtime + extensions + composer + entrypoint
+# base — shared PHP-FPM runtime + extensions + composer
 # ---------------------------------------------------------------------------
 FROM php:8.4-fpm-bookworm AS base
 
@@ -27,9 +27,6 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint
-RUN chmod +x /usr/local/bin/entrypoint
-
 # ---------------------------------------------------------------------------
 # vendor — production dependencies only (cached layer)
 # ---------------------------------------------------------------------------
@@ -45,7 +42,8 @@ RUN composer install \
     --optimize-autoloader
 
 # ---------------------------------------------------------------------------
-# development — code is bind-mounted at runtime; deps installed by entrypoint
+# development — code is bind-mounted at runtime; deps installed by the
+#               one-shot `setup` service in docker-compose.yaml
 # ---------------------------------------------------------------------------
 FROM base AS development
 
@@ -55,7 +53,6 @@ USER www-data
 
 EXPOSE 9000
 
-ENTRYPOINT ["entrypoint"]
 CMD ["php-fpm"]
 
 # ---------------------------------------------------------------------------
@@ -76,7 +73,6 @@ USER www-data
 
 EXPOSE 9000
 
-ENTRYPOINT ["entrypoint"]
 CMD ["php-fpm"]
 
 # ---------------------------------------------------------------------------
