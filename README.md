@@ -37,10 +37,12 @@ Both run with hot reload -- edit a file and the browser updates.
 ## Deploying
 
 **Backend -> VPS.** See **[backend/DEPLOY.md](backend/DEPLOY.md)**. Production
-runs a separate stack (`backend/docker-compose.prod.yml`) with five services
-behind Caddy, which handles HTTPS automatically and serves two subdomains:
-`api.yoursite.com` for Laravel and `db.yoursite.com` for phpMyAdmin (behind a
-password prompt). MySQL has no open port at all.
+runs a separate stack (`backend/docker-compose.prod.yaml`) that listens only on
+`127.0.0.1`. nginx installed on the VPS sits in front of it, with HTTPS from
+certbot, and serves two subdomains: `api.yoursite.com` for Laravel and
+`db.yoursite.com` for phpMyAdmin (behind a password prompt). MySQL has no open
+port at all. Several APIs can share one VPS -- see "Deploying another API on
+the same server" in the guide.
 
 ```bash
 cd backend

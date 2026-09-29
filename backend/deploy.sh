@@ -31,6 +31,9 @@ $COMPOSE build
 echo "==> Starting containers"
 $COMPOSE up -d --remove-orphans
 
+echo "==> Running database migrations"
+$COMPOSE exec -T app php artisan migrate --force
+
 echo "==> Cleaning up old images"
 docker image prune -f >/dev/null
 

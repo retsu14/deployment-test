@@ -1,29 +1,6 @@
 name: api
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      API_DOMAIN: ${API_DOMAIN}
-      DB_DOMAIN: ${DB_DOMAIN}
-      DB_AUTH_USER: ${DB_AUTH_USER}
-      DB_AUTH_HASH: ${DB_AUTH_HASH}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - web
-      - phpmyadmin
-    networks:
-      - app-network
-
-  # --- Nginx: serves Laravel's public/ and hands .php to the app container --
   web:
     build:
       context: .
@@ -33,6 +10,8 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    ports: 
+      - "127.0.0.1:8000:80"
     volumes:
       # Read-only so uploaded files under storage/app/public can be served.
       - laravel-storage:/var/www/html/storage:ro
@@ -75,7 +54,6 @@ services:
     networks:
       - app-network
 
-  # --- MySQL. No "ports:" on purpose -- nothing outside can reach it. -------
   db:
     image: mysql:8.4
     restart: unless-stopped
@@ -98,20 +76,18 @@ services:
       start_period: 30s
     networks:
       - app-network
-
-  # --- phpMyAdmin. Also has no "ports:" -- the only way in is through Caddy,
-  # --- which asks for a password first.
+ 
   phpmyadmin:
     image: phpmyadmin:5
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    ports: 
+      - "127.0.0.1:8001:80"
     environment:
       PMA_HOST: db
       PMA_PORT: 3306
-      # Tells phpMyAdmin it is being reached over https, so it stops
-      # redirecting the browser back to http.
       PMA_ABSOLUTE_URI: https://${DB_DOMAIN}/
       UPLOAD_LIMIT: 64M
     networks:
@@ -124,5 +100,3 @@ networks:
 volumes:
   mysql-data:
   laravel-storage:
-  caddy-data:
-  caddy-config:
